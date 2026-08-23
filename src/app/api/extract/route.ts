@@ -22,7 +22,10 @@ import { needsReview } from "@/lib/extract/types";
 //     2. TLS-encrypted HTTP request body
 //     3. Server request handler memory (ephemeral, GC'd after response)
 //
-//   This is the same pattern used by ChatGPT and Claude.ai.
+// MULTI-PRODUCT SUPPORT (v0.3):
+//   A single document may contain multiple products. The AI
+//   returns them in a "products" array and we create a separate
+//   Product row for each, all linked to the same source file.
 // ═══════════════════════════════════════════════════════════════
 
 const ALLOWED_TYPES = new Set([
@@ -126,8 +129,14 @@ export async function POST(request: Request) {
       });
       rawContent = result.content;
     } catch (aiErr: any) {
-      const msg = aiErr?.message || "Unknown AI provider error";
-      console.error(`[extract] AI error (${useProvider}):`, msg);
+      const msg = (aiErr?.message || "Unknown AI provider error")
+        .replace(/\.z-ai-config[^\s]*/gi, "configuration")
+        .replace(/z-ai-web-dev-sdk[^\s]*/gi, "vision SDK")
+        .replace(/z\.ai/gi, "the platform")
+        .replace(/ZAI[^\s]*/g, "Vision")
+        .replace(/\/etc\//g, "")
+        .replace(/\/home\/\S+/g, "");
+      console.error(`[extract] AI error (${useProvider}):`, aiErr?.message || msg);
       return NextResponse.json(
         { error: `AI extraction failed: ${msg}`, code: "AI_PROVIDER_ERROR" },
         { status: 502 }
@@ -152,34 +161,60 @@ export async function POST(request: Request) {
       );
     }
 
-    // --- Write to SQLite ---
-    const hasReviewNeeded = extraction.fields.some((f) => needsReview(f.confidence));
-    const productStatus = hasReviewNeeded ? "needs_review" : "approved";
+    // --- Create products in SQLite (multi-product support) ---
+    const createdProducts = [];
 
-    const product = await db.product.create({
-      data: {
-        name: extraction.product_name,
-        fileName, mimeType, fileSize: approxSize,
-        status: productStatus,
-        fields: {
-          create: extraction.fields.map((f) => ({
-            fieldName: f.field,
-            value: f.value,
-            confidence: f.confidence,
-            sourcePage: f.source_page,
-            sourceSnippet: f.source_snippet,
-            status: needsReview(f.confidence) ? "needs_review" : "approved",
-          })),
+    for (const prod of extraction.products) {
+      const hasReviewNeeded = prod.fields.some((f) => needsReview(f.confidence));
+      const productStatus = hasReviewNeeded ? "needs_review" : "approved";
+
+      const product = await db.product.create({
+        data: {
+          name: prod.product_name,
+          fileName,
+          mimeType,
+          fileSize: approxSize,
+          status: productStatus,
+          fields: {
+            create: prod.fields.map((f) => ({
+              fieldName: f.field,
+              value: f.value,
+              confidence: f.confidence,
+              sourcePage: f.source_page,
+              sourceSnippet: f.source_snippet,
+              status: needsReview(f.confidence) ? "needs_review" : "approved",
+            })),
+          },
         },
-      },
-      include: { fields: true },
-    });
+        include: { fields: true },
+      });
 
-    const reviewCount = product.fields.filter((f: { status: string }) => f.status === "needs_review").length;
+      const reviewCount = product.fields.filter(
+        (f: { status: string }) => f.status === "needs_review"
+      ).length;
+
+      createdProducts.push({
+        productId: product.id,
+        name: product.name,
+        fieldCount: product.fields.length,
+        reviewCount,
+        status: product.status,
+      });
+    }
+
+    const isMulti = createdProducts.length > 1;
 
     return NextResponse.json({
-      productId: product.id, name: product.name,
-      fieldCount: product.fields.length, reviewCount, status: product.status,
+      productCount: createdProducts.length,
+      products: createdProducts,
+      // Backwards-compatible single-product fields for v0.2 clients
+      ...(isMulti ? {} : {
+        productId: createdProducts[0].productId,
+        name: createdProducts[0].name,
+        fieldCount: createdProducts[0].fieldCount,
+        reviewCount: createdProducts[0].reviewCount,
+        status: createdProducts[0].status,
+      }),
     });
   } catch (error: any) {
     console.error("[extract] Error:", error);

@@ -222,6 +222,34 @@ body {
   transition: all 0.15s;
   position: relative;
 }
+.pc-delete-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: none;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: var(--radius);
+  opacity: 0.5;
+  transition: all 0.15s;
+ display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  z-index: 2;
+}
+.product-card:hover .pc-delete-btn {
+  opacity: 1;
+}
+.pc-delete-btn:hover {
+  color: var(--red-600);
+  background: var(--red-50);
+}
+.dark .pc-delete-btn:hover {
+  background: var(--red-950);
+}
 .product-card:hover {
   border-color: var(--stone-400);
   box-shadow: var(--shadow);

@@ -102,7 +102,7 @@ The entire UI is a **single vanilla JavaScript file** (`public/app.js`, ~680 lin
 | **Frontend** | Pure HTML + CSS + Vanilla JS | Zero framework dependency, portable, fast |
 | **Styling** | Hand-written CSS + custom properties | Light/dark theme via `.dark` class toggle |
 | **Database** | SQLite via Prisma ORM | Zero-config, single-file (`db/custom.db`) |
-| **AI (Built-in)** | z-ai-web-dev-sdk | Platform-provided vision model, no key needed |
+| **AI (Built-in)** | Vision SDK (internal) | Platform-provided vision model, no key needed |
 | **AI (External)** | OpenAI / Anthropic / Google / DeepSeek | User's own keys, sent per-request |
 | **Fonts** | Inter (sans) + JetBrains Mono (mono) | Clean industrial aesthetic |
 
@@ -509,7 +509,7 @@ This prevents accidental calls to provider APIs without proper credentials.
 
 | Provider | Model | API Endpoint | PDF Support | Image Support | Key Header |
 |----------|-------|-------------|-------------|---------------|------------|
-| **Built-in** | Platform default | z-ai-web-dev-sdk | Yes (file_url) | Yes (image_url) | N/A |
+| **Built-in** | Platform default | Internal vision SDK | Yes (file_url) | Yes (image_url) | N/A |
 | **OpenAI** | GPT-4o | `api.openai.com/v1/chat/completions` | Yes (as image_url) | Yes | `Authorization: Bearer` |
 | **Anthropic** | Claude Sonnet 4 | `api.anthropic.com/v1/messages` | Yes (document type) | Yes | `x-api-key` |
 | **Google** | Gemini 2.0 Flash | `generativelanguage.googleapis.com/v1beta/models/...` | Yes (inlineData) | Yes | `?key=` query param |

@@ -201,24 +201,48 @@ export async function callProviderExtraction(
   }
 }
 
-// ── Built-in (ZAI SDK) ───────────────────────────────────────
+// ── Built-in Vision ─────────────────────────────────────────
+
+/** Strip any internal platform references from error messages before sending to the client. */
+function sanitizeError(err: any): Error {
+  const raw = err?.message || String(err);
+ // Remove file paths, config names, and platform identifiers that should never reach the user
+  const clean = raw
+    .replace(/\.z-ai-config[^\s]*/gi, "configuration")
+    .replace(/z-ai-web-dev-sdk[^\s]*/gi, "vision SDK")
+    .replace(/z\.ai/gi, "the platform")
+    .replace(/ZAI[^\s]*/g, "Vision")
+    .replace(/\/etc\//g, "")
+    .replace(/\/home\/[^\s]+/g, "");
+  return new Error(clean);
+}
 
 async function callBuiltinVision(
   params: ExtractionCallParams
 ): Promise<ExtractionResult> {
-  const zai = await ZAI.create();
+  let zai;
+  try {
+    zai = await ZAI.create();
+  } catch (err: any) {
+    throw sanitizeError(err);
+  }
   const messages: VisionMessage[] = [
     { role: "assistant", content: params.systemPrompt },
     { role: "user", content: params.userContent as any },
   ];
-  const response = await zai.chat.completions.createVision({
-    messages,
-    thinking: { type: "disabled" },
-    model: "default",
-  });
+  let response;
+  try {
+    response = await zai.chat.completions.createVision({
+      messages,
+      thinking: { type: "disabled" },
+      model: "default",
+    });
+  } catch (err: any) {
+    throw sanitizeError(err);
+  }
   const content = response.choices?.[0]?.message?.content;
   if (!content)
-    throw new Error("Built-in VLM returned an empty response.");
+    throw new Error("Built-in vision model returned an empty response.");
   return { content, provider: "builtin", model: "platform-default" };
 }
 

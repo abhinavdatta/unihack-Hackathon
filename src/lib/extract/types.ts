@@ -139,6 +139,11 @@ export interface ExtractionResponse {
   fields: ExtractedField[];
 }
 
+/** Multi-product extraction — a single document may contain multiple products */
+export interface MultiExtractionResponse {
+  products: ExtractionResponse[];
+}
+
 // ═══════════════════════════════════════════════════════════════
 // SCHEMA.ORG EXPORT TYPE — what the user downloads
 // ═══════════════════════════════════════════════════════════════

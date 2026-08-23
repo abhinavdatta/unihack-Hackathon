@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════
-// SPECLENS — Pure Vanilla JS Application  v0.2
+// SPECLENS — Pure Vanilla JS Application  v0.3
 // No React, no framework. Just HTML + CSS + JavaScript.
 //
 // API keys can be stored in browser memory (ephemeral) or
@@ -98,6 +98,7 @@
     csv: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h2"/><path d="M14 13h2"/><path d="M8 17h2"/><path d="M14 17h2"/></svg>',
     keyboard: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M8 16h8"/></svg>',
     package: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>',
+    layers: '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 12.5-8.58 3.91a2 2 0 0 1-1.66 0L3.17 12"/><path d="m22 17.5-8.58 3.91a2 2 0 0 1-1.66 0L3.17 17.5"/></svg>',
   };
 
   // ── Helpers ──────────────────────────────────────────────
@@ -219,7 +220,12 @@
       if (state.aiProvider !== "builtin") { body.provider = state.aiProvider; body.apiKey = state.aiApiKey; }
       return api("/api/extract", { method: "POST", body: JSON.stringify(body) });
     }).then(function(d) {
-      toast('Extracted "'+d.name+'" — '+d.fieldCount+' fields, '+d.reviewCount+' need review');
+      // v0.3: Multi-product extraction support
+      if (d.productCount > 1) {
+        toast('Multi-product extraction: ' + d.productCount + ' products found!');
+      } else {
+        toast('Extracted "' + (d.name || d.products[0].name) + '" — ' + (d.fieldCount || d.products[0].fieldCount) + ' fields, ' + (d.reviewCount || d.products[0].reviewCount) + ' need review');
+      }
       return fetchProducts();
     }).catch(function(e) { toast(e.message || "Extraction failed", "error"); })
     .finally(function() { state.extracting = false; render(); });
@@ -253,8 +259,11 @@
       if (state.aiProvider !== "builtin") { body.provider = state.aiProvider; body.apiKey = state.aiApiKey; }
       return api("/api/extract", { method: "POST", body: JSON.stringify(body) });
     }).then(function(d) {
+      // v0.3: A single file may produce multiple products
       state.batchProgress.items[idx].status = "success";
+      state.batchProgress.items[idx].productCount = d.productCount || 1;
       state.batchProgress.done++;
+      state.batchProgress.total += (d.productCount || 1) - 1; // adjust total for multi-product
     }).catch(function(e) {
       state.batchProgress.items[idx].status = "error";
       state.batchProgress.errors++;
@@ -296,7 +305,7 @@
   function exportCSV(id) {
     if (!state.fields || !state.fields.length) { toast("No fields to export", "error"); return; }
     var rows = [["Field","Value","Confidence","Status"]];
- state.fields.forEach(function(f) {
+   state.fields.forEach(function(f) {
     rows.push([f.label||f.fieldName, f.value||"", f.confidence.toFixed(2), f.status]);
   });
     var csv = rows.map(function(r) { return r.map(function(c) { return '"' + String(c).replace(/"/g, '""') + '"'; }).join(","); }).join("\n");
@@ -317,6 +326,16 @@
     }).then(function() { render(); })
     .catch(function(e) { toast(e.message||"Delete failed","error"); })
     .finally(function() { state.deleting = false; render(); });
+  }
+
+  function deleteProductFromCatalog(id) {
+    var card = document.querySelector('[data-product-id="'+id+'"]');
+    if (card) card.style.opacity = "0.4";
+    api("/api/products/"+id, { method: "DELETE" }).then(function(d) {
+      toast("Deleted product and "+d.deleted.fields+" fields");
+      return fetchProducts();
+    }).then(function() { render(); })
+    .catch(function(e) { toast(e.message||"Delete failed","error"); if (card) card.style.opacity = "1"; });
   }
 
   function clearData() {
@@ -351,7 +370,7 @@
 
   function renderHeader() {
     $("#header").innerHTML =
-      '<div class="logo">SpecLens <span class="version">v0.2</span></div>' +
+      '<div class="logo">SpecLens <span class="version">v0.3</span></div>' +
       '<div class="header-nav">' +
         '<button class="tab-btn '+(state.view==='catalog'||state.view==='detail'?'active':'')+ '" data-tab="catalog">Catalog</button>' +
         '<button class="tab-btn '+(state.view==='review'?'active':'')+ '" data-tab="review">Review Queue</button>' +
@@ -412,7 +431,8 @@
       state.batchProgress.items.forEach(function(item) {
         var cls = item.status === 'success' ? 'success' : item.status === 'error' ? 'error' : 'pending';
         var label = item.status === 'success' ? '✓' : item.status === 'error' ? '✗' : '…';
-        batchHtml += '<div class="bp-item"><span>'+esc(item.name)+'</span><span class="bp-status '+cls+'">'+label+'</span></div>';
+        var multiLabel = (item.productCount > 1) ? ' (' + item.productCount + ' products)' : '';
+        batchHtml += '<div class="bp-item"><span>'+esc(item.name)+multiLabel+'</span><span class="bp-status '+cls+'">'+label+'</span></div>';
       });
       batchHtml += '</div></div>';
     }
@@ -438,6 +458,7 @@
       grid = '<div class="product-grid">';
       paged.forEach(function(p) {
         grid += '<div class="product-card" data-product-id="'+p.id+'">' +
+          '<button class="pc-delete-btn" data-card-delete="'+p.id+'" title="Delete product">'+icons.x+'</button>' +
           '<div class="pc-name">'+esc(p.name)+' '+statusBadge(p.status)+'</div>' +
           '<div class="pc-meta">' +
             '<span>'+icons.upload+' '+esc(p.fileName)+'</span>' +
@@ -551,7 +572,7 @@
   }
 
   function renderFooter() {
-    $("#footer").innerHTML = '<p>SpecLens — AI-Powered Product Intelligence · v0.2</p>';
+    $("#footer").innerHTML = '<p>SpecLens — AI-Powered Product Intelligence · v0.3</p>';
   }
 
   function renderSourcePanel() {
@@ -586,9 +607,9 @@
     }
     var dangerHtml = "";
     if (!state.clearConfirm) {
-      dangerHtml = '<button class="danger-btn" id="clear-data-btn">'+icons.trash+' Clear all products and fields</button>';
+      dangerHtml = '<button class="danger-btn" id="clear-data-btn">'+icons.trash+' Delete All Products</button>';
     } else {
-      dangerHtml = '<div class="danger-confirm"><div style="display:flex;align-items:flex-start;gap:0.5rem">'+icons.alert+'<div style="flex:1"><p>This will permanently delete all products and extracted fields.</p><p class="dc-hint">Uploaded file data sent to the AI cannot be recalled.</p><div class="dc-actions"><button class="btn btn-sm btn-danger" id="confirm-clear-btn" '+(state.clearing?'disabled':'')+'>'+(state.clearing?'Deleting...':'Yes, clear everything')+'</button><button class="btn btn-sm" id="cancel-clear-btn">Cancel</button></div></div></div></div>';
+      dangerHtml = '<div class="danger-confirm"><div style="display:flex;align-items:flex-start;gap:0.5rem">'+icons.alert+'<div style="flex:1"><p>This will permanently delete <strong>all ' + state.products.length + ' products</strong> and all extracted fields.</p><p class="dc-hint">Uploaded file data sent to the AI cannot be recalled.</p><div class="dc-actions"><button class="btn btn-sm btn-danger" id="confirm-clear-btn" '+(state.clearing?'disabled':'')+'>'+(state.clearing?'Deleting...':'Yes, delete everything')+'</button><button class="btn btn-sm" id="cancel-clear-btn">Cancel</button></div></div></div></div>';
     }
     var builtinNote = state.aiProvider === "builtin" ? '<div class="builtin-note">'+icons.zap+' Using the built-in vision model. No configuration needed.</div>' : '';
     var settingsHtml = '<div class="sp-header"><h2>Settings</h2><button class="sp-close" id="settings-close">'+icons.x+'</button></div><div class="sp-body">' +
@@ -645,6 +666,8 @@
     if (e.target.closest("#clear-data-btn")) { state.clearConfirm = true; renderSettings(); return; }
     if (e.target.closest("#confirm-clear-btn")) { clearData(); return; }
     if (e.target.closest("#cancel-clear-btn")) { state.clearConfirm = false; renderSettings(); return; }
+    var cardDel = e.target.closest("[data-card-delete]");
+    if (cardDel) { e.stopPropagation(); deleteProductFromCatalog(cardDel.dataset.cardDelete); return; }
     var pc = e.target.closest("[data-product-id]");
     if (pc) { openDetail(pc.dataset.productId); return; }
     if (e.target.closest("#back-btn")) { state.view="catalog"; state.selectedProductId=null; state.sourceField=null; render(); return; }
@@ -674,7 +697,8 @@
       if (state.cacheKey) saveCachedKey();
       var btn = document.getElementById("test-key-btn");
       if (btn) btn.disabled = !state.aiApiKey || state.keyValidating;
-      var existing = e.target && e.target.closest(".key-section")&& querySelector(".validation-ok,.validation-err");
+      var ks = e.target && e.target.closest(".key-section");
+      var existing = ks && ks.querySelector(".validation-ok,.validation-err");
       if (existing) existing.remove();
     }
     if (e.target.id === "search-input") {

@@ -1,4 +1,5 @@
 import { PRODUCT_FIELDS } from "./types";
+import type { ExtractionResponse, MultiExtractionResponse } from "./types";
 
 // ═══════════════════════════════════════════════════════════════
 // EXTRACTION SYSTEM PROMPT
@@ -9,6 +10,13 @@ import { PRODUCT_FIELDS } from "./types";
 //   — the model sees the whole document at once. A single prompt
 //   with a tight JSON schema is faster and more reliable than
 //   chaining "find dimensions" → "find certifications" calls.
+//
+// MULTI-PRODUCT SUPPORT (v0.3):
+//   A single document/image may contain datasheets for multiple
+//   products (e.g., two sensors side-by-side, a catalog page with
+//   several products). The prompt instructs the model to detect
+//   ALL distinct products and return them in a "products" array.
+//   For single-product documents, the array has one entry.
 //
 // CONFIDENCE CALIBRATION: The prompt explicitly ties confidence
 //   to *observable evidence*. "If you see the exact number in a
@@ -36,6 +44,16 @@ export const EXTRACTION_SYSTEM_PROMPT = `You are an industrial product datasheet
 4. Preserve units exactly as written (e.g. "250mm", "IP67", "CE, UL, RoHS").
 5. If a value appears multiple times, use the most specific/authoritative occurrence.
 
+## MULTI-PRODUCT DETECTION
+
+A single document/image may contain datasheets for MULTIPLE products. You MUST:
+- Identify each distinct product separately (by model number, product name, or visual separation)
+- Extract each product's fields independently
+- Return ALL products in the "products" array
+- If the document contains only ONE product, return a single-element array
+- If the document is a catalog page with many products, extract ALL of them
+- Products are typically separated by clear visual boundaries, different model numbers, or different product categories
+
 ## CONFIDENCE CALIBRATION
 
 Use these anchors:
@@ -60,77 +78,98 @@ ${FIELD_LIST}
 
 ## OUTPUT FORMAT
 
+Always return a JSON object with a "products" array. Each element has "product_name" and "fields":
+
 {
-  "product_name": "<string>",
-  "fields": [
+  "products": [
     {
-      "field": "<field_key>",
-      "value": "<extracted_value>",
-      "confidence": <0.0-1.0>,
-      "source_page": <number>,
-      "source_snippet": "<exact text from document>"
+      "product_name": "<string>",
+      "fields": [
+        {
+          "field": "<field_key>",
+          "value": "<extracted_value>",
+          "confidence": <0.0-1.0>,
+          "source_page": <number>,
+          "source_snippet": "<exact text from document>"
+        }
+      ]
     }
   ]
 }
 
-## EXAMPLE
+## EXAMPLE — Single Product
 
 {
-  "product_name": "Schneider Electric ATV320U22N4C Variable Speed Drive",
-  "fields": [
+  "products": [
     {
-      "field": "manufacturer",
-      "value": "Schneider Electric",
-      "confidence": 0.98,
-      "source_page": 0,
-      "source_snippet": "Schneider Electric — ATV320 Variable Speed Drives"
+      "product_name": "Schneider Electric ATV320U22N4C Variable Speed Drive",
+      "fields": [
+        {
+          "field": "manufacturer",
+          "value": "Schneider Electric",
+          "confidence": 0.98,
+          "source_page": 0,
+          "source_snippet": "Schneider Electric — ATV320 Variable Speed Drives"
+        },
+        {
+          "field": "voltage",
+          "value": "200–240V AC ±10%",
+          "confidence": 0.95,
+          "source_page": 1,
+          "source_snippet": "Rated supply voltage: 200–240V AC ±10%, 50/60 Hz"
+        },
+        {
+          "field": "ip_rating",
+          "value": "IP20",
+          "confidence": 0.92,
+          "source_page": 2,
+          "source_snippet": "IP rating: IP20 (with optional IP55 kit)"
+        },
+        {
+          "field": "material",
+          "value": "Aluminium housing, PC front cover",
+          "confidence": 0.88,
+          "source_page": 3,
+          "source_snippet": "Housing: die-cast aluminium. Front cover: polycarbonate"
+        }
+      ]
+    }
+  ]
+}
+
+## EXAMPLE — Multiple Products
+
+{
+  "products": [
+    {
+      "product_name": "Inductive Proximity Sensor IE-IPS-M18-08NNO",
+      "fields": [
+        { "field": "model_number", "value": "IE-IPS-M18-08NNO", "confidence": 0.99, "source_page": 0, "source_snippet": "Model: IE-IPS-M18-08NNO" },
+        { "field": "ip_rating", "value": "IP67", "confidence": 0.95, "source_page": 0, "source_snippet": "Enclosure Rating: IP67 (IEC 60529)" },
+        { "field": "voltage", "value": "10 – 30 V DC", "confidence": 0.95, "source_page": 0, "source_snippet": "Supply Voltage: 10 – 30 V DC" }
+      ]
     },
     {
-      "field": "voltage",
-      "value": "200–240V AC ±10%",
-      "confidence": 0.95,
-      "source_page": 1,
-      "source_snippet": "Rated supply voltage: 200–240V AC ±10%, 50/60 Hz"
-    },
-    {
-      "field": "ip_rating",
-      "value": "IP20",
-      "confidence": 0.92,
-      "source_page": 2,
-      "source_snippet": "IP rating: IP20 (with optional IP55 kit)"
-    },
-    {
-      "field": "material",
-      "value": "Aluminium housing, PC front cover",
-      "confidence": 0.88,
-      "source_page": 3,
-      "source_snippet": "Housing: die-cast aluminium. Front cover: polycarbonate"
+      "product_name": "DIN Rail Power Supply IE-DR-24V-60W",
+      "fields": [
+        { "field": "model_number", "value": "IE-DR-24V-60W", "confidence": 0.99, "source_page": 0, "source_snippet": "Model: IE-DR-24V-60W" },
+        { "field": "power_rating", "value": "60 W", "confidence": 0.96, "source_page": 0, "source_snippet": "Output Power: 60 W" },
+        { "field": "voltage", "value": "24 V DC ±1%", "confidence": 0.95, "source_page": 0, "source_snippet": "Output Voltage: 24 V DC ±1%" }
+      ]
     }
   ]
 }`;
 
 /** User prompt wrapping the file — sent as the user message with the document */
 export function buildUserPrompt(fileName: string): string {
-  return `Extract all product attributes from this datasheet file "${fileName}". Return ONLY the JSON object as specified. Do not include any fields not found in the document.`;
+  return `Extract ALL product attributes from this datasheet file "${fileName}". If the document contains multiple products, extract each one separately. Return ONLY the JSON object as specified (with a "products" array). Do not include any fields not found in the document.`;
 }
 
 /**
  * Post-processing: validate and clamp the LLM response.
- *
- * TRADEOFF: We try to fix common LLM mistakes (wrapping in markdown
- * code fences, extra text) rather than failing hard. For a hackathon
- * this pragmatism beats a strict parse-or-die approach.
+ * Supports both single-product (legacy) and multi-product (v0.3) formats.
  */
-export function parseExtractionResponse(raw: string): {
-  product_name: string;
-  fields: {
-    field: string;
-    value: string;
-    confidence: number;
-    source_page: number;
-    source_snippet: string;
-  }[];
-} {
+export function parseExtractionResponse(raw: string): MultiExtractionResponse {
   // Strip markdown code fences if the model added them
   let cleaned = raw.trim();
   if (cleaned.startsWith("```")) {
@@ -146,32 +185,52 @@ export function parseExtractionResponse(raw: string): {
 
   const parsed = JSON.parse(cleaned);
 
-  // Validate minimum shape
-  if (!parsed.product_name || typeof parsed.product_name !== "string") {
-    throw new Error("Missing or invalid product_name in extraction response");
-  }
-  if (!Array.isArray(parsed.fields)) {
-    throw new Error("Missing or invalid fields array in extraction response");
-  }
-
-  // Clamp confidence to [0, 1] and validate each field
   const validKeys = new Set(PRODUCT_FIELDS.map((f) => f.key));
-  const fields = parsed.fields
-    .filter((f: Record<string, unknown>) => {
-      if (!f.field || typeof f.field !== "string") return false;
-      if (!f.value || typeof f.value !== "string") return false;
-      return true;
-    })
-    .map((f: Record<string, unknown>) => ({
+
+  function normalizeField(f: Record<string, unknown>) {
+    if (!f.field || typeof f.field !== "string") return null;
+    if (!f.value || typeof f.value !== "string") return null;
+    return {
       field: f.field as string,
       value: (f.value as string).trim(),
       confidence: Math.max(0, Math.min(1, Number(f.confidence) || 0)),
       source_page: Math.max(0, Number(f.source_page) || 0),
       source_snippet: String(f.source_snippet || ""),
-    }));
+    };
+  }
 
-  return {
-    product_name: parsed.product_name.trim(),
-    fields,
-  };
+  function normalizeProduct(p: Record<string, unknown>): ExtractionResponse {
+    if (!p.product_name || typeof p.product_name !== "string") {
+      throw new Error("Missing or invalid product_name in extraction response");
+    }
+    if (!Array.isArray(p.fields)) {
+      throw new Error("Missing or invalid fields array in extraction response");
+    }
+    const fields = p.fields
+      .map((f: Record<string, unknown>) => normalizeField(f))
+      .filter(Boolean) as ExtractionResponse["fields"];
+    return {
+      product_name: (p.product_name as string).trim(),
+      fields,
+    };
+  }
+
+  // --- Multi-product format (v0.3): { "products": [...] } ---
+  if (parsed.products && Array.isArray(parsed.products) && parsed.products.length > 0) {
+    const products = parsed.products.map(normalizeProduct);
+    if (products.length === 0) {
+      throw new Error("No valid products found in extraction response");
+    }
+    return { products };
+  }
+
+  // --- Legacy single-product format (v0.2): { "product_name": "...", "fields": [...] } ---
+  if (parsed.product_name && parsed.fields) {
+    const product = normalizeProduct(parsed);
+    return { products: [product] };
+  }
+
+  throw new Error(
+    'Unexpected extraction response format. Expected { "products": [...] } or { "product_name": "...", "fields": [...] }.'
+  );
 }
